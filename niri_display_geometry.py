@@ -23,11 +23,12 @@ ALIGNS = ("top", "bottom", "left", "right")
 
 def find_socket():
     try:
-        for f in os.listdir(RUNTIME_DIR):
-            if f.startswith("niri.wayland-") and f.endswith(".sock"):
-                return os.path.join(RUNTIME_DIR, f)
+        entries = os.listdir(RUNTIME_DIR)
     except FileNotFoundError:
-        pass
+        return None
+    for f in entries:
+        if f.startswith("niri.wayland-") and f.endswith(".sock"):
+            return os.path.join(RUNTIME_DIR, f)
     return None
 
 

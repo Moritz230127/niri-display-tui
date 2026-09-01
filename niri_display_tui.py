@@ -141,20 +141,25 @@ class App:
         self.status = "已重置 (重新读取 monitors.conf)"
 
     # ---- 绘制 ----
+    def safe_addstr(self, y, x, text, attr=0):
+        """addstr 且忽略终端边界错误 (小终端绘制越界属预期)"""
+        try:
+            self.stdscr.addstr(y, x, text, attr)
+            return True
+        except curses.error:
+            return False
+
     def box(self, y, x, height, width, title="", attr=0):
         """画 Unicode 线条边框盒子"""
         if height < 2 or width < 4:
             return
-        try:
-            self.stdscr.addstr(y, x, "┌" + "─" * (width - 2) + "┐", attr)
-            for i in range(1, height - 1):
-                self.stdscr.addstr(y + i, x, "│", attr)
-                self.stdscr.addstr(y + i, x + width - 1, "│", attr)
-            self.stdscr.addstr(y + height - 1, x, "└" + "─" * (width - 2) + "┘", attr)
-            if title:
-                self.stdscr.addstr(y, x + 2, title, attr | curses.A_BOLD)
-        except curses.error:
-            pass
+        self.safe_addstr(y, x, "┌" + "─" * (width - 2) + "┐", attr)
+        for i in range(1, height - 1):
+            self.safe_addstr(y + i, x, "│", attr)
+            self.safe_addstr(y + i, x + width - 1, "│", attr)
+        self.safe_addstr(y + height - 1, x, "└" + "─" * (width - 2) + "┘", attr)
+        if title:
+            self.safe_addstr(y, x + 2, title, attr | curses.A_BOLD)
 
     def draw(self):
         self.stdscr.erase()
@@ -173,10 +178,7 @@ class App:
             name = m["name"]
             c = self.cfg[name]
             header = f"  {i + 1}. {name}  ·  {m['make']} {m['model']}  ·  {m['width']}x{m['height']}"
-            try:
-                self.stdscr.addstr(y, 2, header[: w - 4], curses.color_pair(C_TITLE) | curses.A_BOLD)
-            except curses.error:
-                pass
+            self.safe_addstr(y, 2, header[: w - 4], curses.color_pair(C_TITLE) | curses.A_BOLD)
             y += 1
             y = self.draw_fields(y, 4, i)
             y += 1
@@ -189,17 +191,11 @@ class App:
 
         # 状态行
         if self.status:
-            try:
-                self.stdscr.addstr(h - 3, 2, self.status[: w - 4], curses.color_pair(C_VALUE))
-            except curses.error:
-                pass
+            self.safe_addstr(h - 3, 2, self.status[: w - 4], curses.color_pair(C_VALUE))
 
         # 底部提示 (左对齐, 避免中文双宽换行)
         hint = "↑↓ 移动 · ←→ 切换 · +/- 缩放 · F2 应用 · F3 重置 · q 退出"
-        try:
-            self.stdscr.addstr(h - 2, 2, hint[: w - 4], curses.color_pair(C_TITLE))
-        except curses.error:
-            pass
+        self.safe_addstr(h - 2, 2, hint[: w - 4], curses.color_pair(C_TITLE))
         self.stdscr.refresh()
 
     def draw_fields(self, y, x, mi):
@@ -217,10 +213,7 @@ class App:
                 label = f"位置 [{c['side']}]"
             else:
                 label = f"对齐 [{c['align']}]"
-            try:
-                self.stdscr.addstr(y, x, label, attr)
-            except curses.error:
-                pass
+            self.safe_addstr(y, x, label, attr)
             y += 1
         return y
 
@@ -295,17 +288,14 @@ class App:
                         grid[gy][gx] = "├" if right in hset else "┤"
         for i, row in enumerate(grid):
             line = "  " + "".join(row)
-            try:
-                self.stdscr.addstr(y + i, x, line[:width], curses.color_pair(C_VALUE))
-            except curses.error:
-                pass
+            self.safe_addstr(y + i, x, line[:width], curses.color_pair(C_VALUE))
 
 
 def main():
     try:
         curses.wrapper(lambda stdscr: (init_colors(), App(stdscr).run()))
     except KeyboardInterrupt:
-        pass
+        return 0
     return 0
 
 
