@@ -1,0 +1,4 @@
+# niri 显示器热插拔自动配置
+# DRM 设备 add/remove/change 事件触发 niri-display-hotplug.sh
+# 该脚本立即 detach 返回, 后台 debounce 后以用户身份应用显示器布局。
+ACTION=="add|remove|change", SUBSYSTEM=="drm", KERNEL=="card*", RUN+="/usr/local/bin/niri-display-hotplug.sh"

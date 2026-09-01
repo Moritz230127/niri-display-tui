@@ -1,0 +1,7 @@
+# niri 已知显示器配置 (niri-display-tui 生成)
+# 格式: name|mode|scale|vrr|side|align
+#   side: left/right/top/bottom (该屏相对另一屏的位置)
+#   align: 横排 top/bottom, 竖排 left/right (对齐方式)
+eDP-1|2560x1600@165.040|1.50|on|left|top
+HDMI-A-1|1920x1080@60.000|1.00||left|top
+DP-1|2560x1440@60.000|1.25||right|top
