@@ -41,7 +41,7 @@ def niri_msg(args):
 
 
 def get_connected():
-    """返回已连接显示器列表 [{name, make, model, width, height, scale}]"""
+    """返回已连接显示器列表 [{name, make, model, width, height, scale, modes}]"""
     r = niri_msg(["-j", "outputs"])
     if not r or r.returncode != 0:
         return []
@@ -52,6 +52,8 @@ def get_connected():
     out = []
     for name, info in data.items():
         mode = info["modes"][info["current_mode"]]
+        # 可用模式列表 (refresh_rate 单位 mHz)
+        modes = [f"{m['width']}x{m['height']}@{m['refresh_rate'] / 1000:.3f}" for m in info["modes"]]
         out.append({
             "name": name,
             "make": info.get("make", ""),
@@ -59,6 +61,7 @@ def get_connected():
             "width": mode["width"],
             "height": mode["height"],
             "scale": info["logical"]["scale"],
+            "modes": modes,
         })
     return out
 

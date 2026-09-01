@@ -22,6 +22,10 @@ LOG=/tmp/niri-display-autoconfig.log
 RUNTIME_DIR=/run/user/1000
 OUTPUTS_KDL="$HOME/.config/niri/outputs.kdl"
 
+# 串行化: 防止 udev 多事件并发运行 (wrapper 已去重, 此处双保险)
+exec 9>"/tmp/niri-display-autoconfig.lock"
+flock 9 2>/dev/null || exit 0
+
 log() { echo "$(date '+%F %T') $*" >>"$LOG"; }
 
 log "=== hotplug triggered ==="
@@ -133,6 +137,10 @@ fi
 /usr/bin/niri msg action load-config-file >>"$LOG" 2>&1
 log "  niri config reloaded"
 
-# --- 7. 同步 noctalia --------------------------------------------------------
-/usr/bin/noctalia msg config-reload >>"$LOG" 2>&1
+# --- 7. 同步 noctalia (仅当其运行时) -----------------------------------------
+if pgrep -x noctalia >/dev/null 2>&1; then
+    /usr/bin/noctalia msg config-reload >>"$LOG" 2>&1
+else
+    log "  [skip] noctalia not running"
+fi
 log "  done"

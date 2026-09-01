@@ -65,6 +65,7 @@ class App:
         # 字段导航: [(monitor_index, field), ...]
         self.fields = []
         for i in range(len(self.connected)):
+            self.fields.append((i, "mode"))
             self.fields.append((i, "scale"))
             self.fields.append((i, "side"))
             self.fields.append((i, "align"))
@@ -99,6 +100,16 @@ class App:
     def cycle(self, delta):
         mi, field = self.fields[self.cursor]
         name = self.connected[mi]["name"]
+        if field == "mode":
+            # 分辨率: 循环该屏可用模式
+            modes = self.connected[mi].get("modes", [])
+            if not modes:
+                return
+            cur = self.cfg[name]["mode"]
+            idx = modes.index(cur) if cur in modes else 0
+            new = modes[(idx + delta) % len(modes)]
+            self.cfg[name]["mode"] = new
+            return
         if field == "side":
             vals = SIDES
         elif field == "align":
@@ -199,15 +210,17 @@ class App:
         self.stdscr.refresh()
 
     def draw_fields(self, y, x, mi):
-        """绘制某显示器的三个字段 (缩放/位置/对齐), 每个一行, 选中项高亮"""
+        """绘制某显示器的四个字段 (分辨率/缩放/位置/对齐), 每个一行, 选中项高亮"""
         name = self.connected[mi]["name"]
         c = self.cfg[name]
-        for field in ("scale", "side", "align"):
+        for field in ("mode", "scale", "side", "align"):
             if self.fields.index((mi, field)) == self.cursor:
                 attr = curses.A_REVERSE | curses.color_pair(C_SELECT)
             else:
                 attr = curses.color_pair(C_VALUE)
-            if field == "scale":
+            if field == "mode":
+                label = f"分辨率 [{c['mode']}]"
+            elif field == "scale":
                 label = f"缩放 [{c['scale']:.2f}]"
             elif field == "side":
                 label = f"位置 [{c['side']}]"
