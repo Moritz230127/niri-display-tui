@@ -52,16 +52,18 @@ log "  connected: $(printf '%s' "$CONNECTED" | tr '\n' ' ')"
 has() { printf '%s\n' "$CONNECTED" | grep -qx "$1"; }
 
 # --- 3. 已知显示器预设 --------------------------------------------------------
-# 从数据文件读取 (name|mode|scale|vrr|side|align), 每行一个显示器
+# 从数据文件读取 (name|mode|scale|vrr|side|align|transform|enabled), 每行一个显示器
 #   side: left/right/top/bottom (相对另一屏的位置)
 #   align: 横排 top/bottom, 竖排 left/right (对齐方式)
+#   transform: normal/90/180/270/flipped/...
+#   enabled: on/off
 # 自由调节: niri-display-tui (TUI) 或 niri-display-adjust.sh 实时调整并回写此文件
 MONITORS_CONF="$HOME/.config/niri/monitors.conf"
 mapfile -t KNOWN_MONITORS < <(grep -vE '^\s*#|^\s*$' "$MONITORS_CONF" 2>/dev/null)
 
 # 计算布局: 调用共享几何模块 (side/align + 逻辑尺寸 -> 坐标), 仅输出已连接屏
 layout_positions() {
-    python3 /home/Arch/Pi工作区/scripts/niri_display_geometry.py --positions 2>>"$LOG"
+    python3 /usr/local/bin/niri_display_geometry.py --positions 2>>"$LOG"
 }
 
 # --- 4. 生成 outputs.kdl ------------------------------------------------------

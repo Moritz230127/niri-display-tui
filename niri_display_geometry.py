@@ -2,9 +2,11 @@
 """niri 显示器布局几何计算 (共享模块, TUI 与 autoconfig 共用)
 
 数据模型 (monitors.conf, 每行一条):
-    name|mode|scale|vrr|side|align
+    name|mode|scale|vrr|side|align|transform|enabled
     side:  left/right/top/bottom — 该屏相对另一屏的位置 (放置顺序)
     align: 横排 top/bottom, 竖排 left/right — 对齐方式
+    transform: normal/90/180/270/flipped/... — 旋转
+    enabled: on/off — 是否启用 (off 时 autoconfig 输出 off)
 
 CLI:
     --positions   输出 "name x y" (逻辑坐标, 供 autoconfig 生成 outputs.kdl)
@@ -41,7 +43,7 @@ def niri_msg(args):
 
 
 def get_connected():
-    """返回已连接显示器列表 [{name, make, model, width, height, scale, modes}]"""
+    """返回已连接显示器列表 [{name, make, model, width, height, scale, modes, transform}]"""
     r = niri_msg(["-j", "outputs"])
     if not r or r.returncode != 0:
         return []
@@ -61,13 +63,14 @@ def get_connected():
             "width": mode["width"],
             "height": mode["height"],
             "scale": info["logical"]["scale"],
+            "transform": info.get("transform", "normal"),
             "modes": modes,
         })
     return out
 
 
 def load_config():
-    """读取 monitors.conf -> {name: {mode, scale, vrr, side, align}}"""
+    """读取 monitors.conf -> {name: {mode, scale, vrr, side, align, transform, enabled}}"""
     cfg = {}
     if not os.path.exists(MONITORS_CONF):
         return cfg
@@ -80,6 +83,8 @@ def load_config():
                 parts = line.split("|")
                 if len(parts) >= 6:
                     name, mode, scale, vrr, side, align = parts[:6]
+                    transform = parts[6] if len(parts) > 6 and parts[6] else "normal"
+                    enabled = parts[7] if len(parts) > 7 and parts[7] else "on"
                     try:
                         cfg[name] = {
                             "mode": mode,
@@ -87,6 +92,8 @@ def load_config():
                             "vrr": vrr,
                             "side": side,
                             "align": align,
+                            "transform": transform,
+                            "enabled": enabled,
                         }
                     except ValueError:
                         continue
@@ -96,15 +103,19 @@ def load_config():
 
 
 def save_config(cfg):
-    """写回 monitors.conf (v2 格式)"""
+    """写回 monitors.conf (v2.1 格式, 兼容旧 6 字段)"""
     lines = [
         "# niri 已知显示器配置 (niri-display-tui 生成)",
-        "# 格式: name|mode|scale|vrr|side|align",
+        "# 格式: name|mode|scale|vrr|side|align|transform|enabled",
         "#   side: left/right/top/bottom (该屏相对另一屏的位置)",
         "#   align: 横排 top/bottom, 竖排 left/right (对齐方式)",
+        "#   transform: normal/90/180/270/flipped/flipped-90/flipped-180/flipped-270",
+        "#   enabled: on/off",
     ]
     for name, c in cfg.items():
-        lines.append(f"{name}|{c['mode']}|{c['scale']:.2f}|{c['vrr']}|{c['side']}|{c['align']}")
+        transform = c.get("transform", "normal")
+        enabled = c.get("enabled", "on")
+        lines.append(f"{name}|{c['mode']}|{c['scale']:.2f}|{c['vrr']}|{c['side']}|{c['align']}|{transform}|{enabled}")
     try:
         with open(MONITORS_CONF, "w") as f:
             f.write("\n".join(lines) + "\n")
@@ -132,11 +143,38 @@ def compute_layout(cfg):
     竖排 (side 为 top/bottom): 上屏 y=0, 下屏 y=上屏高;
         align=left 两屏 x=0; align=right 两屏右边对齐于 max 宽
     """
+    # Disabled outputs do not participate in the layout.
+    cfg = {k: v for k, v in cfg.items() if v.get("enabled", "on") != "off"}
     names = list(cfg.keys())
     if not names:
         return {}
     if len(names) == 1:
         return {names[0]: (0, 0)}
+
+    # Generalised N-monitor layout: a horizontal row or a vertical column.
+    # This keeps the simple side/align model usable for 3+ screens.
+    if all(cfg[n]["side"] in ("left", "right") for n in names):
+        align = cfg[names[0]].get("align", "top")
+        max_h = max(logical_size(cfg[n])[1] for n in names)
+        layout = {}
+        x = 0.0
+        for n in names:
+            w, h = logical_size(cfg[n])
+            y = max_h - h if align == "bottom" else 0.0
+            layout[n] = (x, y)
+            x += w
+        return layout
+    if all(cfg[n]["side"] in ("top", "bottom") for n in names):
+        align = cfg[names[0]].get("align", "left")
+        max_w = max(logical_size(cfg[n])[0] for n in names)
+        layout = {}
+        y = 0.0
+        for n in names:
+            w, h = logical_size(cfg[n])
+            x = max_w - w if align == "right" else 0.0
+            layout[n] = (x, y)
+            y += h
+        return layout
 
     a, b = names[0], names[1]
     sa, sb = cfg[a]["side"], cfg[b]["side"]

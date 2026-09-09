@@ -1,64 +1,63 @@
 #!/bin/bash
-# =============================================================================
-# niri 显示器快速缩放调节 (快捷键用)
-# -----------------------------------------------------------------------------
-# 用法:
-#   niri-display-adjust.sh scale +0.25|-0.25   调整聚焦显示器缩放
-#
-# 实时应用 (niri msg output) 并回写 ~/.config/niri/monitors.conf (持久化).
-# 位置/对齐请用 niri-display-tui (TUI) 设置.
-# =============================================================================
-set -u
+# niri-display-adjust.sh — quick scale/move adjustments for the focused output.
+# Persists scale changes to monitors.conf; move is temporary (position is
+# normally computed from side/align by the TUI/autoconfig).
+set -euo pipefail
 
-RUNTIME_DIR=/run/user/1000
-MONITORS_CONF="$HOME/.config/niri/monitors.conf"
-
-# --- 发现 niri socket --------------------------------------------------------
-# shellcheck disable=SC2012
-SOCK=$(ls "$RUNTIME_DIR"/niri.wayland-*.sock 2>/dev/null | head -1)
+CONF="$HOME/.config/niri/monitors.conf"
+SOCK=$(ls /run/user/"$(id -u)"/niri.wayland-*.sock 2>/dev/null | head -1)
 if [ -z "$SOCK" ]; then
-  echo "niri socket not found under $RUNTIME_DIR" >&2
-  exit 1
+    echo "niri socket not found" >&2
+    exit 1
 fi
 export NIRI_SOCKET="$SOCK"
 
-# --- 聚焦显示器 --------------------------------------------------------------
-NAME=$(niri msg -j focused-output 2>/dev/null | jq -r '.name')
-if [ -z "$NAME" ]; then
-  echo "no focused output" >&2
-  exit 1
+FOCUSED=$(niri msg -j focused-output | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
+ENTRY=$(grep "^${FOCUSED}|" "$CONF" 2>/dev/null | tail -1 || true)
+if [ -z "$ENTRY" ]; then
+    echo "$FOCUSED is not in $CONF" >&2
+    exit 1
 fi
 
-# --- 回写 monitors.conf 中 NAME 行的 scale 字段 (field 3) ---------------------
-update_scale() {
-  local val="$1"
-  awk -v name="$NAME" -v val="$val" '
-        $0 ~ /\|/ && $0 !~ /^[[:space:]]*#/ {
-            n = split($0, f, "|")
-            if (f[1] == name) {
-                f[3] = val
-                out = f[1]
-                for (i = 2; i <= n; i++) out = out "|" f[i]
-                print out
-                next
-            }
-        }
-        { print }
-    ' "$MONITORS_CONF" >"$MONITORS_CONF.tmp" && mv "$MONITORS_CONF.tmp" "$MONITORS_CONF"
-}
+IFS='|' read -r name mode scale vrr side align transform enabled <<<"$ENTRY"
+: "${transform:=normal}"
+: "${enabled:=on}"
 
 case "${1:-}" in
-scale)
-  DELTA="${2:-}"
-  CUR=$(niri msg -j outputs | jq -r ".[\"$NAME\"].logical.scale")
-  NEW=$(awk -v c="$CUR" -v d="$DELTA" 'BEGIN { printf "%.2f", c + d }')
-  NEW=$(awk -v n="$NEW" 'BEGIN { if (n < 1) n = 1; if (n > 3) n = 3; printf "%.2f", n }')
-  niri msg output "$NAME" scale "$NEW"
-  update_scale "$NEW"
-  echo "scale $NAME: $CUR -> $NEW"
-  ;;
-*)
-  echo "usage: $0 scale +0.25|-0.25" >&2
-  exit 1
-  ;;
+    scale)
+        delta="${2:-}"
+        if [[ "$delta" == \+* ]]; then
+            new=$(python3 -c "print(f'{$scale+${delta#+}:.2f}')")
+        elif [[ "$delta" == -* ]]; then
+            new=$(python3 -c "print(f'{$scale${delta}:.2f}')")
+        elif [[ "$delta" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+            new="$delta"
+        else
+            echo "usage: $0 scale +0.25|-0.25|VALUE" >&2
+            exit 1
+        fi
+        niri msg output "$FOCUSED" scale "$new"
+        sed -i "s/^${FOCUSED}|.*/${FOCUSED}|${mode}|${new}|${vrr}|${side}|${align}|${transform}|${enabled}/" "$CONF"
+        ;;
+    move)
+        dir="${2:-}"
+        step="${3:-10}"
+        read -r cx cy <<<"$(niri msg -j focused-output | python3 -c 'import json,sys; d=json.load(sys.stdin)["logical"]; print(d["x"], d["y"])')"
+        nx="$cx"; ny="$cy"
+        case "$dir" in
+            left)  nx=$((cx-step)) ;;
+            right) nx=$((cx+step)) ;;
+            up)    ny=$((cy-step)) ;;
+            down)  ny=$((cy+step)) ;;
+            *) echo "usage: $0 move left|right|up|down [step]" >&2; exit 1 ;;
+        esac
+        niri msg output "$FOCUSED" position set "$nx" "$ny"
+        ;;
+    reset)
+        /usr/local/bin/niri-display-autoconfig.sh
+        ;;
+    *)
+        echo "usage: $0 scale +0.25|-0.25|VALUE | move left|right|up|down [step] | reset" >&2
+        exit 1
+        ;;
 esac
