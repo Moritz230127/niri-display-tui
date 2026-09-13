@@ -1,63 +1,110 @@
-#!/bin/bash
-# niri-display-adjust.sh — quick scale/move adjustments for the focused output.
-# Persists scale changes to monitors.conf; move is temporary (position is
-# normally computed from side/align by the TUI/autoconfig).
-set -euo pipefail
+#!/usr/bin/env bash
+# niri-display-adjust —— 调整聚焦显示器的缩放
+# 2026-09-13 重建:原脚本随 ~/Pi工作区/scripts/ 消失,而 Mod+Ctrl+Plus/Minus 仍绑定本路径。
+#
+# 用法:
+#   niri-display-adjust scale +0.25      # 放大一档(相对)
+#   niri-display-adjust scale -0.25      # 缩小一档(相对)
+#   niri-display-adjust scale 1.5        # 绝对设置
+#   niri-display-adjust scale auto       # 交回 niri 自动选择
+#   niri-display-adjust list             # 列出全部输出及其缩放
+#   niri-display-adjust --dry-run scale +0.25   # 只打印将要执行的命令
+#
+# 说明:niri msg 的 output 改动是**运行时临时**的,不写入 outputs.kdl;
+#      重启 niri 或 outputs.kdl 变化后会回到配置值。
+set -uo pipefail
 
-CONF="$HOME/.config/niri/monitors.conf"
-SOCK=$(ls /run/user/"$(id -u)"/niri.wayland-*.sock 2>/dev/null | head -1)
-if [ -z "$SOCK" ]; then
-    echo "niri socket not found" >&2
-    exit 1
-fi
-export NIRI_SOCKET="$SOCK"
+STEP_MIN=0.50
+STEP_MAX=3.00
 
-FOCUSED=$(niri msg -j focused-output | python3 -c 'import json,sys; print(json.load(sys.stdin)["name"])')
-ENTRY=$(grep "^${FOCUSED}|" "$CONF" 2>/dev/null | tail -1 || true)
-if [ -z "$ENTRY" ]; then
-    echo "$FOCUSED is not in $CONF" >&2
-    exit 1
-fi
+# --dry-run 允许出现在任意位置
+DRY=0
+_args=()
+for _a in "$@"; do
+    if [ "$_a" = "--dry-run" ]; then DRY=1; continue; fi
+    _args+=("$_a")
+done
+if [ "${#_args[@]}" -gt 0 ]; then set -- "${_args[@]}"; else set --; fi
 
-IFS='|' read -r name mode scale vrr side align transform enabled <<<"$ENTRY"
-: "${transform:=normal}"
-: "${enabled:=on}"
+ACTION="${1:-list}"
+shift || true
 
-case "${1:-}" in
+NIRI_MSG=(niri msg)
+
+die() { echo "niri-display-adjust: $*" >&2; exit 1; }
+
+command -v niri >/dev/null 2>&1 || die "找不到 niri 命令"
+command -v jq   >/dev/null 2>&1 || die "找不到 jq(用于解析 niri IPC JSON)"
+
+list_outputs() {
+    "${NIRI_MSG[@]}" --json outputs 2>/dev/null | jq -r '
+        to_entries[] | "\(.key)\t\(.value.logical.scale // "?")\t\(.value.logical.width // "?")x\(.value.logical.height // "?")"'
+}
+
+focused_output() {
+    "${NIRI_MSG[@]}" --json focused-output 2>/dev/null | jq -r '.name // empty'
+}
+
+current_scale() {
+    "${NIRI_MSG[@]}" --json outputs 2>/dev/null | jq -r --arg o "$1" '.[$o].logical.scale // empty'
+}
+
+case "$ACTION" in
+    list|ls)
+        printf '%-14s %-8s %s\n' "输出" "缩放" "逻辑分辨率"
+        while IFS=$'\t' read -r name scale size; do
+            printf '%-14s %-8s %s\n' "$name" "$scale" "$size"
+        done < <(list_outputs)
+        out=$(focused_output)
+        [ -n "$out" ] && echo && echo "当前聚焦: $out"
+        ;;
+
     scale)
-        delta="${2:-}"
-        if [[ "$delta" == \+* ]]; then
-            new=$(python3 -c "print(f'{$scale+${delta#+}:.2f}')")
-        elif [[ "$delta" == -* ]]; then
-            new=$(python3 -c "print(f'{$scale${delta}:.2f}')")
-        elif [[ "$delta" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
-            new="$delta"
+        target="${1:-}"
+        [ -n "$target" ] || die "用法: niri-display-adjust scale [+0.25|-0.25|1.5|auto]"
+
+        out=$(focused_output)
+        [ -n "$out" ] || die "没有聚焦的输出"
+
+        if [ "$target" = "auto" ]; then
+            new="auto"
         else
-            echo "usage: $0 scale +0.25|-0.25|VALUE" >&2
-            exit 1
+            cur=$(current_scale "$out")
+            [ -n "$cur" ] || die "读不到 $out 的当前缩放"
+            if [[ "$target" =~ ^[+-] ]]; then
+                new=$(awk -v c="$cur" -v d="$target" -v lo="$STEP_MIN" -v hi="$STEP_MAX" 'BEGIN{
+                    v = c + d;
+                    if (v < lo) v = lo;
+                    if (v > hi) v = hi;
+                    printf "%.2f", v
+                }')
+                # 已在边界时不做无意义的写入
+                if awk -v a="$cur" -v b="$new" 'BEGIN{exit !(a==b)}'; then
+                    echo "$out 缩放已是 ${cur}(边界 ${STEP_MIN}–${STEP_MAX})"
+                    exit 0
+                fi
+            else
+                new="$target"
+            fi
         fi
-        niri msg output "$FOCUSED" scale "$new"
-        sed -i "s/^${FOCUSED}|.*/${FOCUSED}|${mode}|${new}|${vrr}|${side}|${align}|${transform}|${enabled}/" "$CONF"
+
+        if [ "$DRY" = 1 ]; then
+            echo "将执行: niri msg output $out scale $new"
+            exit 0
+        fi
+
+        "${NIRI_MSG[@]}" output "$out" scale "$new" || die "设置失败"
+        echo "$out 缩放: ${cur:-?} → $new"
+        command -v notify-send >/dev/null 2>&1 && \
+            notify-send -t 1500 -h string:x-canonical-private-synchronous:display-scale \
+                "显示器缩放" "$out: $new" 2>/dev/null
         ;;
-    move)
-        dir="${2:-}"
-        step="${3:-10}"
-        read -r cx cy <<<"$(niri msg -j focused-output | python3 -c 'import json,sys; d=json.load(sys.stdin)["logical"]; print(d["x"], d["y"])')"
-        nx="$cx"; ny="$cy"
-        case "$dir" in
-            left)  nx=$((cx-step)) ;;
-            right) nx=$((cx+step)) ;;
-            up)    ny=$((cy-step)) ;;
-            down)  ny=$((cy+step)) ;;
-            *) echo "usage: $0 move left|right|up|down [step]" >&2; exit 1 ;;
-        esac
-        niri msg output "$FOCUSED" position set "$nx" "$ny"
+
+    -h|--help|help)
+        sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
         ;;
-    reset)
-        /usr/local/bin/niri-display-autoconfig.sh
-        ;;
+
     *)
-        echo "usage: $0 scale +0.25|-0.25|VALUE | move left|right|up|down [step] | reset" >&2
-        exit 1
+        die "未知动作: $ACTION(可用: scale | list | help)"
         ;;
 esac

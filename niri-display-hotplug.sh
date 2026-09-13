@@ -31,5 +31,5 @@ setsid runuser -u Arch -- env \
     HOME=/home/Arch \
     XDG_RUNTIME_DIR=/run/user/1000 \
     WAYLAND_DISPLAY=wayland-1 \
-    /home/Arch/Pi工作区/scripts/niri-display-autoconfig.sh >/dev/null 2>&1 &
+    /usr/local/bin/niri-display-autoconfig.sh >/dev/null 2>&1 &
 exit 0
